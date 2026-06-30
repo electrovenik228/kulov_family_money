@@ -3,6 +3,8 @@ import {
   ArrowRightLeft,
   Bell,
   CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ExternalLink,
   Pencil,
@@ -610,26 +612,206 @@ function DebtsPage({
 }
 
 function CalendarPage({ transactions }: { transactions: Transaction[] }) {
-  const days = Array.from({ length: 30 }, (_, index) => index + 1);
+  const today = new Date();
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
+  const [selectedDate, setSelectedDate] = useState(() => formatDateKey(today));
+  const visibleYear = visibleMonth.getFullYear();
+  const visibleMonthIndex = visibleMonth.getMonth();
+  const yearOptions = useMemo(() => {
+    const years = transactions.map((tx) => Number(tx.date.slice(0, 4))).filter(Boolean);
+    const minYear = Math.min(today.getFullYear() - 1, ...years);
+    const maxYear = Math.max(today.getFullYear() + 1, ...years);
+    return Array.from({ length: maxYear - minYear + 1 }, (_, index) => minYear + index);
+  }, [transactions]);
+  const monthCells = useMemo(() => buildMonthCells(visibleYear, visibleMonthIndex), [visibleYear, visibleMonthIndex]);
+  const transactionsByDate = useMemo(() => {
+    return transactions.reduce<Record<string, Transaction[]>>((grouped, tx) => {
+      grouped[tx.date] = [...(grouped[tx.date] ?? []), tx];
+      return grouped;
+    }, {});
+  }, [transactions]);
+  const visibleTransactions = transactions.filter((tx) => Number(tx.date.slice(0, 4)) === visibleYear && Number(tx.date.slice(5, 7)) === visibleMonthIndex + 1);
+  const selectedTransactions = transactionsByDate[selectedDate] ?? [];
+  const monthIncome = totalByType(visibleTransactions, "income") + totalByType(visibleTransactions, "return");
+  const monthExpenses = totalByType(visibleTransactions, "expense");
+  const selectedLabel = formatCalendarDate(selectedDate);
+  const monthLabel = visibleMonth.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
+
+  function changeMonth(offset: number) {
+    const next = new Date(visibleYear, visibleMonthIndex + offset, 1);
+    setVisibleMonth(next);
+    setSelectedDate(formatDateKey(next));
+  }
+
+  function selectMonth(month: number) {
+    const next = new Date(visibleYear, month, 1);
+    setVisibleMonth(next);
+    setSelectedDate(formatDateKey(next));
+  }
+
+  function selectYear(year: number) {
+    const next = new Date(year, visibleMonthIndex, 1);
+    setVisibleMonth(next);
+    setSelectedDate(formatDateKey(next));
+  }
+
+  function goToday() {
+    const next = new Date(today.getFullYear(), today.getMonth(), 1);
+    setVisibleMonth(next);
+    setSelectedDate(formatDateKey(today));
+  }
+
   return (
-    <Card className="p-5">
-      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
-        {days.map((day) => {
-          const dayTx = transactions.filter((tx) => Number(tx.date.slice(-2)) === day);
-          const income = dayTx.filter((tx) => tx.type === "income").reduce((sum, tx) => sum + Number(tx.amount), 0);
-          const expenses = dayTx.filter((tx) => tx.type === "expense").reduce((sum, tx) => sum + Number(tx.amount), 0);
-          return (
-            <div key={day} className="min-h-28 rounded-lg border border-slate-100 bg-white p-3">
-              <div className="flex items-center justify-between"><b>{day}</b><CalendarDays size={15} className="text-slate-400" /></div>
-              <p className="mt-3 text-xs text-emerald-600">+ {money(income)}</p>
-              <p className="mt-1 text-xs text-rose-600">- {money(expenses)}</p>
-              <p className="mt-1 text-xs font-bold">{money(income - expenses)}</p>
+    <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
+      <Card className="overflow-hidden">
+        <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-500">Рабочий календарь</p>
+            <h2 className="mt-1 text-xl font-extrabold capitalize tracking-normal">{monthLabel}</h2>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[auto_1fr_1fr_auto]">
+            <div className="flex items-center gap-2">
+              <button className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50" onClick={() => changeMonth(-1)} aria-label="Предыдущий месяц">
+                <ChevronLeft size={18} />
+              </button>
+              <button className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50" onClick={() => changeMonth(1)} aria-label="Следующий месяц">
+                <ChevronRight size={18} />
+              </button>
             </div>
-          );
-        })}
+            <select className={inputClass} value={visibleMonthIndex} onChange={(event) => selectMonth(Number(event.target.value))} aria-label="Месяц">
+              {monthNames.map((month, index) => (
+                <option key={month} value={index}>{month}</option>
+              ))}
+            </select>
+            <select className={inputClass} value={visibleYear} onChange={(event) => selectYear(Number(event.target.value))} aria-label="Год">
+              {yearOptions.map((year) => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+            <Button variant="secondary" onClick={goToday}>
+              <CalendarDays size={17} />
+              Сегодня
+            </Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50 text-center text-xs font-bold uppercase text-slate-500">
+          {weekDays.map((day) => (
+            <div key={day} className="px-2 py-3">{day}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7">
+          {monthCells.map((cell) => {
+            const dayTx = transactionsByDate[cell.key] ?? [];
+            const income = totalByType(dayTx, "income") + totalByType(dayTx, "return");
+            const expenses = totalByType(dayTx, "expense");
+            const isSelected = cell.key === selectedDate;
+            const isToday = cell.key === formatDateKey(today);
+            const isWeekend = cell.date.getDay() === 0 || cell.date.getDay() === 6;
+            return (
+              <button
+                key={cell.key}
+                className={`min-h-28 border-b border-r border-slate-100 p-3 text-left transition hover:bg-slate-50 ${
+                  cell.inCurrentMonth ? "bg-white" : "bg-slate-50/70 text-slate-400"
+                } ${isSelected ? "ring-2 ring-inset ring-slate-900" : ""}`}
+                onClick={() => setSelectedDate(cell.key)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`grid h-7 w-7 place-items-center rounded-lg text-sm font-bold ${isToday ? "bg-slate-950 text-white" : isWeekend ? "text-rose-600" : "text-slate-800"}`}>
+                    {cell.date.getDate()}
+                  </span>
+                  {!!dayTx.length && <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{dayTx.length}</span>}
+                </div>
+                <div className="mt-3 grid gap-1 text-xs">
+                  {!!income && <p className="truncate font-semibold text-emerald-600">+ {money(income)}</p>}
+                  {!!expenses && <p className="truncate font-semibold text-rose-600">- {money(expenses)}</p>}
+                  {!!(income || expenses) && <p className="truncate font-bold text-slate-800">{money(income - expenses)}</p>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+      <div className="grid content-start gap-5">
+        <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+          <Card className="p-5">
+            <p className="text-sm font-semibold text-slate-500">Доходы месяца</p>
+            <p className="mt-2 text-2xl font-extrabold text-emerald-600">{money(monthIncome)}</p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-sm font-semibold text-slate-500">Расходы месяца</p>
+            <p className="mt-2 text-2xl font-extrabold text-rose-600">{money(monthExpenses)}</p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-sm font-semibold text-slate-500">Итог месяца</p>
+            <p className="mt-2 text-2xl font-extrabold">{money(monthIncome - monthExpenses)}</p>
+          </Card>
+        </div>
+        <Card className="overflow-hidden">
+          <div className="border-b border-slate-100 px-5 py-4">
+            <p className="text-sm font-semibold text-slate-500">Выбранный день</p>
+            <h3 className="mt-1 text-lg font-bold">{selectedLabel}</h3>
+          </div>
+          <div className="grid gap-3 p-5">
+            {selectedTransactions.map((tx) => (
+              <div key={tx.id} className="rounded-lg border border-slate-100 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-bold">{tx.category_name ?? txLabels[tx.type]}</p>
+                    <p className="mt-1 truncate text-sm text-slate-500">{tx.account_name ?? "Счет"} · {tx.comment || tx.source || "Без комментария"}</p>
+                  </div>
+                  <p className={`shrink-0 font-extrabold ${tx.type === "expense" ? "text-rose-600" : tx.type === "income" || tx.type === "return" ? "text-emerald-600" : "text-slate-700"}`}>
+                    {tx.type === "expense" ? "-" : tx.type === "income" || tx.type === "return" ? "+" : ""}
+                    {money(tx.amount)}
+                  </p>
+                </div>
+              </div>
+            ))}
+            {!selectedTransactions.length && <EmptyState text="На этот день операций нет." />}
+          </div>
+        </Card>
       </div>
-    </Card>
+    </div>
   );
+}
+
+const weekDays = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+
+function buildMonthCells(year: number, month: number) {
+  const firstDay = new Date(year, month, 1);
+  const startOffset = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cellCount = Math.ceil((startOffset + daysInMonth) / 7) * 7;
+
+  return Array.from({ length: cellCount }, (_, index) => {
+    const date = new Date(year, month, index - startOffset + 1);
+    return {
+      date,
+      key: formatDateKey(date),
+      inCurrentMonth: date.getMonth() === month,
+    };
+  });
+}
+
+function formatDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatCalendarDate(dateKey: string) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    weekday: "long",
+  });
+}
+
+function totalByType(transactions: Transaction[], type: TransactionType) {
+  return transactions.filter((tx) => tx.type === type).reduce((sum, tx) => sum + Number(tx.amount), 0);
 }
 
 function CategoriesPage({
